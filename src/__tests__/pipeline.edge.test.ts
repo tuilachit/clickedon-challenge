@@ -54,6 +54,24 @@ describe("a draft that fails review is never handed off", () => {
 });
 
 describe("failures are attributed to the stage that produced them", () => {
+  it("treats a throwing reviewer as a review-stage failure, not an exception", async () => {
+    const cause = new Error("review service down");
+    const advanceToNextStage = vi.fn(async () => {});
+
+    const res = await generate({
+      behavior: "ok",
+      advanceToNextStage,
+      reviewPasses: () => {
+        throw cause;
+      },
+      sleep: noSleep,
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.error).toEqual({ stage: "review", cause });
+    expect(advanceToNextStage).not.toHaveBeenCalled();
+  });
+
   it("reports the hand-off as the failing stage, preserving the cause", async () => {
     const cause = new Error("next stage unreachable");
 
@@ -95,6 +113,17 @@ describe("extractJson separates a dropped stream from an absent one", () => {
   it("treats a response with no fence as a permanent failure", () => {
     expect(() => extractJson("I cannot help with that.")).toThrow(
       "No fenced JSON block found",
+    );
+  });
+
+  it("treats a stream that died on the fence opener as truncated", () => {
+    // The stream emitted the fence and nothing else. There is no JSON to
+    // inspect, but this is still a dropped stream and must be retried.
+    expect(() => extractJson("Here you go:\n\n```json")).toThrow(
+      TruncatedResponseError,
+    );
+    expect(() => extractJson("Here you go:\n\n```json\n")).toThrow(
+      TruncatedResponseError,
     );
   });
 

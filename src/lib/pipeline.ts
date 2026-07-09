@@ -103,12 +103,23 @@ export async function generate(input: GenerateInput): Promise<GenerateResult> {
     };
   }
 
-  // Review the initial draft, then revise up to MAX_REVISIONS times.
+  // Review the initial draft, then revise up to MAX_REVISIONS times. A reviewer
+  // that throws is itself a review-stage failure, not an exception for the
+  // caller to catch.
   let attempt = 0;
-  let passed = input.reviewPasses(attempt);
-  while (!passed && attempt < MAX_REVISIONS) {
-    attempt += 1;
+  let passed = false;
+  try {
     passed = input.reviewPasses(attempt);
+    while (!passed && attempt < MAX_REVISIONS) {
+      attempt += 1;
+      passed = input.reviewPasses(attempt);
+    }
+  } catch (cause) {
+    return {
+      status: "error",
+      attempts: attempt,
+      error: { stage: "review", cause },
+    };
   }
 
   // A draft that never passed review must not reach the next stage.

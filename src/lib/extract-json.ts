@@ -14,18 +14,20 @@ const FENCED_BLOCK = /```json\s*([\s\S]*?)```/;
 const FENCE_OPEN = "```json";
 
 /**
- * True when the text tails off inside an unterminated fence that had started
- * emitting JSON — the signature of a dropped stream.
+ * True when the text tails off inside an unterminated fence — the signature of
+ * a dropped stream.
  *
  * Merely containing "```json" is not enough: a model that only *talks* about
  * fences has failed permanently, and retrying it would burn the budget for
- * nothing. We require the trailing fence to be followed by the start of a JSON
- * value.
+ * nothing. So the trailing fence must either be followed by the start of a JSON
+ * value, or by nothing at all — a stream that died on the fence itself emits no
+ * JSON to inspect, and that is still a dropped stream.
  */
 function endsInUnterminatedJsonFence(text: string): boolean {
   const open = text.lastIndexOf(FENCE_OPEN);
   if (open === -1) return false;
   const tail = text.slice(open + FENCE_OPEN.length).trimStart();
+  if (tail === "") return true;
   return tail.startsWith("{") || tail.startsWith("[");
 }
 
