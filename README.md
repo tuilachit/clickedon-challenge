@@ -1,48 +1,58 @@
-# ClickedOn Engineering Challenge
+# ClickedOn AI-native engineering challenge
 
-This is the application for our junior **AI-Native Software Engineer** role. There is no CV step — completing this challenge **is** the application.
+A completed TypeScript reliability challenge for a streamed content-generation pipeline.
 
-You have a small, broken slice of our real content-generation pipeline. Your job is to fix it so the test suite passes, then submit your repo. It should take **about two to three hours**.
+The original pipeline worked on its happy path but lost failed handoffs, crashed on truncated model output, stopped on transient rate limits, and could revise forever. This submission makes every failure explicit and keeps retry behavior bounded.
 
-## The rules
+## What changed
 
-- **Use AI.** Claude Code, Codex, Copilot, ChatGPT — whatever you'd use on the job. This role is about shipping correct code by driving AI well, so we want to see exactly that. Using AI is not cheating here; it's the point.
-- **Fix the code, not the tests.** The grader checks that the test file and the workflow are unmodified. Editing them disqualifies the submission.
-- **Make it genuinely correct.** Passing the tests by gaming them (hard-coding a return value, deleting the logic) is easy to spot and won't progress.
+- Surfaces downstream handoff failures as typed `handoff` errors
+- Retries truncated streams, HTTP 429 responses, and transient 5xx failures
+- Uses bounded exponential backoff with an injectable sleep function
+- Avoids retrying deterministic parse failures
+- Caps the review loop at three revisions
+- Converts reviewer exceptions into typed `review` failures
+- Does not retry a handoff without an idempotency key, avoiding duplicate delivery
 
-## The scenario
+## Control flow
 
-`src/lib/pipeline.ts` runs one content-generation pass: it streams a draft from a model, extracts the JSON, revises it until it passes review, then hands off to the next stage. The streaming client is mocked (`src/lib/anthropic-mock.ts`) so everything runs offline and deterministically.
+```mermaid
+flowchart LR
+    Stream[Stream draft] --> Parse{Valid JSON?}
+    Parse -->|Transient failure| Retry[Bounded retry + backoff]
+    Retry --> Stream
+    Parse -->|Deterministic failure| StreamError[Typed stream error]
+    Parse -->|Yes| Review{Review passes?}
+    Review -->|No, revisions remain| Review
+    Review -->|No| ReviewError[Typed review error]
+    Review -->|Yes| Handoff[Advance once]
+    Handoff -->|Rejected| HandoffError[Typed handoff error]
+    Handoff -->|Resolved| Success[Success]
+```
 
-It works on a good day. It does not survive a bad one. Three real symptoms:
+## Run the verification gates
 
-1. **Failed hand-offs vanish silently.** When the hand-off to the next stage fails, the run still reports success, so a stalled pipeline looks healthy.
-2. **A dropped stream crashes the run.** If the model response arrives truncated, JSON extraction throws and the whole pass dies instead of recovering.
-3. **Transient rate-limits kill the run, and the revision loop can spin.** A temporary `429` takes everything down with no retry, and the revision loop has no real circuit-breaker or failure path.
-
-The tests in `src/__tests__/pipeline.test.ts` describe how it should behave once fixed. Start there.
-
-## How to run it
+Requires Node.js 22 or a compatible modern Node release.
 
 ```bash
 npm ci
-npm test        # the four gate tests — currently failing
 npm run typecheck
 npm run lint
+npm test
 npm run build
 ```
 
-**Bonus:** add one test of your own that covers an edge case you think matters. We notice this.
+The test suite covers:
 
-## How to submit
+1. failed handoffs;
+2. recovery from a truncated first stream;
+3. two consecutive rate limits followed by success; and
+4. a reviewer that never accepts the draft.
 
-1. Click **"Use this template"** at the top of this repo to create **your own** copy (keep it public).
-2. Fix the bugs on your default branch (`main`) and push.
-3. Wait for the **`grade`** GitHub Action to go green on your latest commit (check the **Actions** tab).
-4. Go to **https://careers.clickedon.co** and submit your repo link, along with a short note on **how you used AI** — what you decided, where the model was wrong, and what you'd do with more time.
+## Design notes
 
-That's the whole process. We review every passing submission and reply.
+`GenerateResult` carries the failure stage and original cause so callers can route or report errors without parsing messages. Stream retries are separated from the review loop, making the two budgets independently auditable. Handoffs remain single-attempt until the interface can carry an idempotency key.
 
----
+## Stack
 
-*A note on what we're really looking at: anyone can prompt a tool until the tests go green. We care how you got there — whether you found the root cause, whether you checked the fix actually works, and whether you can tell when the AI's output is wrong. That judgement is the job.*
+TypeScript · Vitest · ESLint · GitHub Actions
