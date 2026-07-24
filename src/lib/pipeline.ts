@@ -107,7 +107,7 @@ export async function generate(input: GenerateInput): Promise<GenerateResult> {
   // that throws is itself a review-stage failure, not an exception for the
   // caller to catch.
   let attempt = 0;
-  let passed = false;
+  let passed: boolean;
   try {
     passed = input.reviewPasses(attempt);
     while (!passed && attempt < MAX_REVISIONS) {
